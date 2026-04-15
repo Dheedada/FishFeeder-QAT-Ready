@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "@react-native-community/datetimepicker": "^8.6.0",
+    "expo": "~55.0.15",
+    "lucide-react-native": "^0.577.0",
+    "react-native-svg": "^15.15.3",
+    "react-native-webview": "13.16.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "typescript": "~5.9.2"
+  }
+}

@@ -24,8 +24,13 @@ export default function Layout() {
         animation: 'fade',
         contentStyle: { backgroundColor: '#F5F7FA' }
       }}>
+        {/* The Official App Map */}
         <Stack.Screen name="index" />
         <Stack.Screen name="dashboard" />
+        
+        {/* NEW: Added the Staff screens so the router knows they exist */}
+        <Stack.Screen name="staff-dashboard" />
+        <Stack.Screen name="staff-management" />
       </Stack>
     </GestureHandlerRootView>
   );

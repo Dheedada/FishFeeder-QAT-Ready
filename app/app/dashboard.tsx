@@ -1,445 +1,369 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ScrollView, Modal, TextInput } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { 
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert,
+  Platform, Modal, TextInput, ActivityIndicator, KeyboardAvoidingView
+} from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons'; 
 import { supabase } from '../src/services/supabase';
-import { Ionicons } from '@expo/vector-icons';
-import * as Notifications from 'expo-notifications';
-import { Swipeable } from 'react-native-gesture-handler';
+import { WebView } from 'react-native-webview';
+
+// --- HARDWARE SETTINGS ---
+// Note: If you are using the wall plug, double check your IP in the hotspot settings!
+const ESP32_IP = "10.129.42.120";
 
 export default function Dashboard() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [foodLevel, setFoodLevel] = useState<number | null>(null);
-  const [schedules, setSchedules] = useState<any[]>([]);
+  
+  // State Management
+  const [foodLevel, setFoodLevel] = useState(0);
+  const [isSystemOnline, setSystemOnline] = useState(true);
+  const [showCamera, setShowCamera] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
-  const [isAdmin, setIsAdmin] = useState(false);
+  
+  // Password Modal States
+  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
 
-  // --- MODAL & SETTINGS STATE ---
-  const [modalVisible, setModalVisible] = useState(false);
-  const [newTime, setNewTime] = useState('');
-  const [newLabel, setNewLabel] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  // Schedules (Full Original Details)
+  const [schedules] = useState([
+    { id: 1, time: '08:00', label: 'Breakfast', active: true },
+    { id: 2, time: '08:30', label: 'Lunch', active: true },
+    { id: 3, time: '09:30', label: 'Dinner', active: true },
+  ]);
 
-  const checkUserRole = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      if (data?.role === 'admin') setIsAdmin(true);
+  useEffect(() => {
+    fetchHistory();
+    // HEARTBEAT: Start polling hardware for Food Level every 5 seconds
+    const interval = setInterval(fetchLiveStatus, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const fetchLiveStatus = async () => {
+    try {
+      const response = await fetch(`http://${ESP32_IP}/level`);
+      const val = await response.text();
+      const num = parseInt(val);
+      setFoodLevel(isNaN(num) ? 0 : num);
+      setSystemOnline(true);
+    } catch (e) {
+      setSystemOnline(false);
     }
-  };
-
-  const fetchSensorData = async () => {
-    try {
-      const { data, error } = await supabase.from('sensor_logs').select('food_level').order('created_at', { ascending: false }).limit(1).single();
-      if (!error && data) {
-        setFoodLevel(data.food_level);
-        if (data.food_level < 20) await Notifications.scheduleNotificationAsync({ content: { title: "⚠️ Low Food", body: `Level critical: ${data.food_level}%.` }, trigger: null });
-      }
-    } catch (error) { console.log(error); }
-  };
-
-  const fetchSchedules = async () => {
-    try {
-      const { data, error } = await supabase.from('feeding_schedules').select('*').order('time_of_day', { ascending: true });
-      if (!error) setSchedules(data || []);
-    } catch (error) { console.log(error); }
   };
 
   const fetchHistory = async () => {
+    const { data } = await supabase
+      .from('feeding_history')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    if (data) {
+      setHistory(data.map((item: any) => ({
+        id: item.id,
+        time: new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        status: item.status
+      })));
+    }
+  };
+
+  const handleFeedNow = async () => {
     try {
-      const { data, error } = await supabase.from('command_queue').select('*').order('created_at', { ascending: false }).limit(6);
-      if (!error && data) setHistory(data);
-    } catch (error) { console.log(error); }
+      await fetch(`http://${ESP32_IP}/feed`); 
+      await supabase.from('feeding_history').insert([{ status: 'Manual Feed (App)' }]);
+      Alert.alert("Success", "Feeding Started!");
+      fetchHistory(); 
+    } catch (error) {
+      Alert.alert("Error", "ESP32 not reached.");
+    }
   };
 
-  const loadAllData = async () => {
-    setLoading(true);
-    await Promise.all([fetchSensorData(), fetchSchedules(), fetchHistory(), checkUserRole()]);
-    setLoading(false);
-  };
-
-  // --- HELPER FUNCTION: CALCULATE NEXT FEEDING TIME ---
-  const getNextFeedTime = () => {
-    if (!schedules || schedules.length === 0) return "No schedules set";
-    
-    const activeSchedules = schedules.filter(s => s.is_active);
-    if (activeSchedules.length === 0) return "Schedules paused";
-
-    const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
-    // Find the first schedule that happens AFTER the current time today
-    let next = activeSchedules.find(s => {
-      const [h, m] = s.time_of_day.split(':').map(Number);
-      return (h * 60 + m) > currentMinutes;
-    });
-
-    // If no more feeds today, the next one is the first schedule tomorrow
-    if (!next) next = activeSchedules[0];
-
-    // Format the output nicely (e.g. "08:30 AM")
-    const [h, m] = next.time_of_day.split(':');
-    const hour = parseInt(h);
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    const formattedHour = hour % 12 || 12; // Convert 24h to 12h
-    return `${formattedHour}:${m} ${ampm} - ${next.label}`;
-  };
-
-  // --- ACTIONS ---
-  const handleFeed = async () => {
-    try {
-      await supabase.from('command_queue').insert([{ command: 'DISPENSE', status: 'PENDING' }]);
-      Alert.alert("Command Sent", "Feeding initiated.");
-      fetchHistory();
-    } catch (error) { Alert.alert("Error", "Failed to send command."); }
+  const handleUpdatePassword = async () => {
+    if (newPassword.length < 6) {
+      Alert.alert("Too Short", "Password must be at least 6 characters long.");
+      return;
+    }
+    setChangingPassword(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setChangingPassword(false);
+    if (error) {
+      Alert.alert("Error", error.message);
+    } else {
+      Alert.alert("Success", "Admin password successfully updated!");
+      setNewPassword('');
+      setPasswordModalVisible(false);
+    }
   };
 
   const handleLogout = async () => {
-    Alert.alert("Log Out", "Are you sure you want to sign out?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Log Out", style: "destructive", onPress: async () => {
+    Alert.alert("Logout", "End session?", [
+      { text: "Cancel" },
+      { text: "Logout", onPress: async () => {
           await supabase.auth.signOut();
           router.replace('/');
-        }
+        } 
       }
     ]);
   };
 
-  const handleReboot = () => {
-    Alert.alert("Remote Reboot", "Are you sure you want to restart the hardware system?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Reboot", style: "destructive", onPress: async () => {
-          await supabase.from('command_queue').insert([{ command: 'REBOOT', status: 'PENDING' }]);
-          fetchHistory();
-          Alert.alert("System Override", "Reboot command sent to hardware.");
-        }
-      }
-    ]);
-  };
-
-  const handleManageStaff = () => {
-    Alert.alert("Staff Management", "This module allows you to invite new staff, reset passwords, or revoke access. (Prototype Feature)");
-  };
-
-  const handleReportIssue = () => {
-    Alert.alert(
-      "Report Issue", 
-      "Has the food hopper jammed or is the hardware unresponsive?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Send Alert to Admin", style: "destructive", onPress: () => {
-            Alert.alert("Report Sent", "The Admin has been notified of the hardware issue.");
-          }
-        }
-      ]
-    );
-  };
-
-  const handleAddNewSchedule = async () => {
-    if (!newTime || !newLabel) return Alert.alert("Missing Info", "Please fill in both fields.");
-    if (!/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(newTime)) return Alert.alert("Invalid Time", "Use HH:MM format.");
-    setSaving(true);
-    const { error } = await supabase.from('feeding_schedules').insert([{ time_of_day: newTime, label: newLabel, is_active: true }]);
-    setSaving(false);
-    if (error) Alert.alert("Error", error.message);
-    else { setModalVisible(false); setNewTime(''); setNewLabel(''); fetchSchedules(); }
-  };
-
-  const handleDeleteSchedule = (id: number) => {
-    Alert.alert("Delete Schedule", "Are you sure you want to remove this feeding time?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => {
-          const { error } = await supabase.from('feeding_schedules').delete().eq('id', id);
-          if (error) Alert.alert("Error", error.message);
-          else fetchSchedules();
-        }
-      }
-    ]);
-  };
-
-  const renderRightActions = (id: number) => {
-    return (
-      <TouchableOpacity style={styles.deleteAction} onPress={() => handleDeleteSchedule(id)}>
-        <Ionicons name="trash-outline" size={24} color="white" />
-        <Text style={styles.deleteActionText}>Delete</Text>
-      </TouchableOpacity>
-    );
-  };
-
-  useEffect(() => {
-    async function requestPermissions() {
-      const { status } = await Notifications.getPermissionsAsync();
-      if (status !== 'granted') await Notifications.requestPermissionsAsync();
-    }
-    requestPermissions();
-    loadAllData();
-  }, []);
+  const cameraHTML = `
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+        <style>
+          body { margin: 0; padding: 0; background-color: black; display: flex; justify-content: center; align-items: center; height: 100vh; }
+          img { width: 100%; height: auto; max-height: 100%; object-fit: contain; }
+        </style>
+      </head>
+      <body>
+        <img src="http://${ESP32_IP}:81/stream?t=${Date.now()}" />
+      </body>
+    </html>
+  `;
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerBlock}>
-        <View style={styles.headerContent}>
+      <View style={styles.header}>
+        <View style={styles.headerTop}>
           <View>
-            <Text style={styles.greetingText}>Welcome, {isAdmin ? "Admin" : "Staff"}</Text>
+            <Text style={styles.welcomeText}>Welcome, Admin</Text>
             <Text style={styles.headerTitle}>Overview</Text>
           </View>
-          <View style={styles.headerButtons}>
-            <TouchableOpacity onPress={() => Alert.alert("Live Camera", "Connecting to ESP32-CAM stream...")} style={styles.iconBtn}>
-              <Ionicons name="videocam-outline" size={20} color="white" />
+          <View style={styles.headerIcons}>
+            <TouchableOpacity 
+              style={[styles.iconBtn, showCamera && { backgroundColor: '#10B981' }]} 
+              onPress={() => setShowCamera(!showCamera)}
+            >
+              <Ionicons name={showCamera ? "videocam" : "videocam-outline"} size={20} color="white" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={loadAllData} style={styles.iconBtn}>
-              <Ionicons name="refresh-outline" size={20} color="white" />
+            <TouchableOpacity style={styles.iconBtn} onPress={fetchHistory}>
+              <Ionicons name="refresh-outline" size={20} color="#A7F3D0" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleLogout} style={styles.iconBtn}>
-              <Ionicons name="log-out-outline" size={20} color="white" />
+            <TouchableOpacity style={styles.iconBtn} onPress={handleLogout}>
+              <Ionicons name="log-out-outline" size={20} color="#A7F3D0" />
             </TouchableOpacity>
           </View>
         </View>
+
+        {showCamera && (
+          <View style={styles.cameraContainer}>
+            <WebView 
+              key={showCamera ? "active" : "inactive"}
+              originWhitelist={['*']}
+              source={{ html: cameraHTML }} 
+              style={styles.webViewStyle}
+              scrollEnabled={false}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              mixedContentMode="always"
+            />
+            <View style={styles.liveIndicator}>
+              <View style={styles.redDot} />
+              <Text style={styles.liveText}>LIVE MONITORING</Text>
+            </View>
+          </View>
+        )}
+
+        {!showCamera && (
+          <View style={styles.bannerCard}>
+            <Ionicons name="time-outline" size={20} color="#065F46" style={{marginRight: 12}} />
+            <View>
+              <Text style={styles.bannerLabel}>UPCOMING AUTO-FEED</Text>
+              <Text style={styles.bannerValue}>08:00 AM - Breakfast</Text>
+            </View>
+          </View>
+        )}
       </View>
 
-      <ScrollView style={styles.contentContainer} showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom: 120}}>
-        
-        {/* --- NEXT SCHEDULED FEED HIGHLIGHT (COMPACT VERSION) --- */}
-        <View style={styles.nextFeedCard}>
-          <View style={styles.nextFeedIconWrap}>
-            <Ionicons name="time-outline" size={20} color="#004D40" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.nextFeedLabel}>Upcoming Auto-Feed</Text>
-            <Text style={styles.nextFeedTime}>{getNextFeedTime()}</Text>
-          </View>
-        </View>
-
-        <View style={styles.cardRow}>
+      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 120 }}>
+        {/* --- STATUS CARDS --- */}
+        <View style={styles.gridContainer}>
           <View style={styles.statusCard}>
-            <View style={styles.cardHeaderRow}>
-               <Text style={styles.cardTitle}>Food Level</Text>
-               <Ionicons name="nutrition-outline" size={20} color={(foodLevel !== null && foodLevel < 20) ? "#D32F2F" : "#004D40"} />
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardLabel}>Food Level</Text>
+              <Ionicons name="nutrition-outline" size={18} color="#EF4444" />
             </View>
-            <Text style={[styles.cardValue, (foodLevel !== null && foodLevel < 20) ? {color: "#D32F2F"} : {}]}>
-              {foodLevel !== null ? `${foodLevel}%` : "--"}
-            </Text>
+            <Text style={styles.foodPercent}>{foodLevel}%</Text>
             <View style={styles.progressBarBg}>
-               <View style={[styles.progressBarFill, {width: `${foodLevel || 0}%`, backgroundColor: (foodLevel !== null && foodLevel < 20) ? "#D32F2F" : "#004D40"}]} />
+              <View style={[styles.progressBarFill, { width: `${foodLevel}%` }]} />
             </View>
           </View>
+
           <View style={styles.statusCard}>
-            <View style={styles.cardHeaderRow}>
-               <Text style={styles.cardTitle}>System</Text>
-               <Ionicons name="wifi-outline" size={20} color={maintenanceMode ? "#F57C00" : "#0277BD"} />
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardLabel}>System</Text>
+              <Ionicons name="wifi" size={18} color="#3B82F6" />
             </View>
-            <Text style={styles.cardValue}>{maintenanceMode ? "Paused" : "Online"}</Text>
-            <Text style={styles.cardSub}>{maintenanceMode ? "Maintenance Mode" : "Stable Connection"}</Text>
+            <Text style={styles.systemStatusText}>{isSystemOnline ? "Online" : "Offline"}</Text>
+            <Text style={styles.systemSubtext}>Hotspot Link</Text>
           </View>
         </View>
 
-        {/* ADMIN CONTROLS */}
-        {isAdmin && (
-          <View style={styles.adminPanel}>
-            <Text style={styles.sectionTitle}>Admin Controls</Text>
-            <View style={styles.adminButtonsRow}>
-              <TouchableOpacity style={styles.adminBtn} onPress={handleReboot}>
-                <View style={[styles.adminIconWrap, { backgroundColor: '#FFEBEE' }]}>
-                  <Ionicons name="power-outline" size={20} color="#D32F2F" />
-                </View>
-                <Text style={styles.adminBtnText}>Reboot</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.adminBtn} onPress={() => setMaintenanceMode(!maintenanceMode)}>
-                <View style={[styles.adminIconWrap, { backgroundColor: maintenanceMode ? '#FFF3E0' : '#ECEFF1' }]}>
-                  <Ionicons name="build-outline" size={20} color={maintenanceMode ? "#F57C00" : "#546E7A"} />
-                </View>
-                <Text style={styles.adminBtnText}>Maint.</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.adminBtn} onPress={handleManageStaff}>
-                <View style={[styles.adminIconWrap, { backgroundColor: '#E3F2FD' }]}>
-                  <Ionicons name="people-outline" size={20} color="#1565C0" />
-                </View>
-                <Text style={styles.adminBtnText}>Staff</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+        {/* --- ADMIN CONTROLS --- */}
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionTitle}>Admin Controls</Text>
+          <View style={styles.controlsRow}>
+            <TouchableOpacity style={styles.controlBtn} onPress={() => Alert.alert("System", "Reboot command sent.")}>
+              <View style={[styles.controlIconCircle, { backgroundColor: '#FEE2E2' }]}>
+                <Ionicons name="power" size={22} color="#EF4444" />
+              </View>
+              <Text style={styles.controlLabel}>Reboot</Text>
+            </TouchableOpacity>
 
-        {/* STAFF TOOLS */}
-        {!isAdmin && (
-          <View style={styles.staffPanel}>
-            <TouchableOpacity style={styles.reportBtn} onPress={handleReportIssue}>
-              <Ionicons name="warning-outline" size={20} color="#D32F2F" />
-              <Text style={styles.reportBtnText}>Report Hardware Issue</Text>
+            <TouchableOpacity style={styles.controlBtn}>
+              <View style={[styles.controlIconCircle, { backgroundColor: '#F3F4F6' }]}>
+                <Ionicons name="construct-outline" size={22} color="#6B7280" />
+              </View>
+              <Text style={styles.controlLabel}>Maint.</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/staff-management')}>
+              <View style={[styles.controlIconCircle, { backgroundColor: '#DBEAFE' }]}>
+                <Ionicons name="people-outline" size={22} color="#3B82F6" />
+              </View>
+              <Text style={styles.controlLabel}>Staff</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.controlBtn} onPress={() => setPasswordModalVisible(true)}>
+              <View style={[styles.controlIconCircle, { backgroundColor: '#F3E8FF' }]}>
+                <Ionicons name="key-outline" size={22} color="#A855F7" />
+              </View>
+              <Text style={styles.controlLabel}>Password</Text>
             </TouchableOpacity>
           </View>
-        )}
-
-        {/* Schedules */}
-        <View style={styles.sectionHeader}>
-           <Text style={styles.sectionTitle}>Automation Schedule</Text>
-           {isAdmin && (
-             <TouchableOpacity onPress={() => setModalVisible(true)} style={styles.addBtnSm}>
-               <Text style={styles.addText}>+ Add</Text>
-             </TouchableOpacity>
-           )}
-        </View>
-        
-        <View style={styles.listBox}>
-          {schedules.length === 0 ? (
-            <Text style={styles.emptyText}>No schedules configured.</Text>
-          ) : (
-            schedules.map((item, index) => {
-              const RowContent = (
-                <View style={[styles.listItem, index === schedules.length - 1 && {borderBottomWidth: 0}]}>
-                  <View>
-                    <Text style={styles.itemTitle}>{item.time_of_day.substring(0, 5)}</Text>
-                    <Text style={styles.itemSub}>{item.label}</Text>
-                  </View>
-                  <Ionicons name={item.is_active ? "toggle" : "toggle-outline"} size={28} color={item.is_active ? "#004D40" : "#CFD8DC"} />
-                </View>
-              );
-
-              return isAdmin ? (
-                <Swipeable key={item.id} renderRightActions={() => renderRightActions(item.id)} containerStyle={{backgroundColor: '#D32F2F'}}>
-                  {RowContent}
-                </Swipeable>
-              ) : (
-                <View key={item.id}>{RowContent}</View>
-              );
-            })
-          )}
         </View>
 
-        {/* History / Audit Logs */}
-        <View style={styles.sectionHeader}>
-           <Text style={styles.sectionTitle}>{isAdmin ? "System Audit Logs" : "Recent Feeding History"}</Text>
+        {/* --- AUTOMATION SCHEDULE --- */}
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionTitle}>Automation Schedule</Text>
+          {schedules.map((item) => (
+            <View key={item.id} style={styles.scheduleItem}>
+              <View>
+                <Text style={styles.scheduleTime}>{item.time}</Text>
+                <Text style={styles.scheduleLabel}>{item.label}</Text>
+              </View>
+              <Switch value={item.active} trackColor={{ false: "#767577", true: "#047857" }} />
+            </View>
+          ))}
         </View>
-        <View style={styles.listBox}>
+
+        {/* --- FEEDING HISTORY --- */}
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionTitle}>Feeding History</Text>
           {history.length === 0 ? (
-            <Text style={styles.emptyText}>No recent activity.</Text>
+            <Text style={styles.systemSubtext}>No recent feedings.</Text>
           ) : (
-            history.map((item, index) => (
-              <View key={item.id} style={[styles.listItem, index === history.length - 1 && {borderBottomWidth: 0}]}>
-                <View style={[styles.historyIconWrap, { backgroundColor: item.command === 'REBOOT' ? '#FFEBEE' : '#F5F7FA'}]}>
-                   <Ionicons 
-                    name={item.command === 'DISPENSE' ? "restaurant-outline" : item.command === 'REBOOT' ? "power-outline" : "cog-outline"} 
-                    size={18} 
-                    color={item.command === 'REBOOT' ? "#D32F2F" : "#455A64"} 
-                   />
+            history.map((log) => (
+              <View key={log.id} style={styles.historyItem}>
+                <View style={styles.historyDot} />
+                <View>
+                  <Text style={styles.historyTime}>{log.time}</Text>
+                  <Text style={styles.historyStatus}>{log.status}</Text>
                 </View>
-                <View style={{flex: 1}}>
-                  <Text style={styles.itemTitleAlt}>
-                    {item.command === 'DISPENSE' ? "Manual Override Feed" : item.command === 'REBOOT' ? "Hardware Reboot" : item.command}
-                  </Text>
-                  <Text style={styles.itemSub}>
-                    {isAdmin && item.command !== 'AUTO' ? "User Initiated • " : ""}
-                    {new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}
-                  </Text>
-                </View>
-                <View style={[styles.badge, {backgroundColor: item.status === 'PROCESSED' ? '#E8F5E9' : '#FFF3E0'}]}>
-                  <Text style={[styles.badgeText, {color: item.status === 'PROCESSED' ? '#2E7D32' : '#EF6C00'}]}>{item.status}</Text>
-                </View>
+                <Ionicons name="checkmark-circle" size={20} color="#059669" style={{marginLeft: 'auto'}} />
               </View>
             ))
           )}
         </View>
       </ScrollView>
 
-      {/* FAB - Hidden if in Maintenance Mode */}
-      {!maintenanceMode && (
-        <TouchableOpacity style={styles.fab} onPress={handleFeed} activeOpacity={0.9}>
-          <Ionicons name="fish" size={24} color="white" />
-          <Text style={styles.fabText}>Feed Now</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Modal */}
-      <Modal animationType="fade" transparent={true} visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
-        <View style={styles.modalBg}>
+      {/* --- PASSWORD MODAL --- */}
+      <Modal visible={passwordModalVisible} animationType="slide" transparent={true}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalHeader}>New Schedule</Text>
-            <Text style={styles.modalLabel}>Time (HH:MM)</Text>
-            <TextInput style={styles.modalInput} placeholder="08:00" value={newTime} onChangeText={setNewTime} keyboardType="numbers-and-punctuation" maxLength={5} />
-            <Text style={styles.modalLabel}>Label</Text>
-            <TextInput style={styles.modalInput} placeholder="Breakfast" value={newLabel} onChangeText={setNewLabel} />
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.modalBtnCancel} onPress={() => setModalVisible(false)}>
-                <Text style={styles.modalBtnTextCancel}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalBtnSave} onPress={handleAddNewSchedule} disabled={saving}>
-                <Text style={styles.modalBtnTextSave}>{saving ? "Saving..." : "Save Schedule"}</Text>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Change Admin Password</Text>
+              <TouchableOpacity onPress={() => setPasswordModalVisible(false)}>
+                <Ionicons name="close" size={28} color="#64748B" />
               </TouchableOpacity>
             </View>
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>New Password</Text>
+              <View style={styles.passwordContainer}>
+                <TextInput 
+                  style={styles.passwordInput} 
+                  placeholder="At least 6 characters" 
+                  secureTextEntry={!showPassword}
+                  value={newPassword} 
+                  onChangeText={setNewPassword} 
+                  placeholderTextColor="#B0BEC5"
+                />
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                  <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#90A4AE" />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <TouchableOpacity style={styles.submitBtn} onPress={handleUpdatePassword} disabled={changingPassword}>
+              {changingPassword ? <ActivityIndicator color="white" /> : <Text style={styles.submitBtnText}>Save Password</Text>}
+            </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
+
+      {/* --- FLOATING FEED BUTTON --- */}
+      <View style={styles.floatingContainer}>
+        <TouchableOpacity style={styles.feedNowBtn} onPress={handleFeedNow}>
+          <Ionicons name="fish-outline" size={24} color="white" style={{ marginRight: 8 }} />
+          <Text style={styles.feedNowText}>Feed Now</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F7FA' },
-  headerBlock: { backgroundColor: '#004D40', paddingVertical: 60, paddingHorizontal: 24, borderBottomRightRadius: 32 },
-  headerContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  greetingText: { color: '#B2DFDB', fontSize: 14, fontWeight: '600' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: '800', letterSpacing: 0.5 },
-  headerButtons: { flexDirection: 'row', gap: 6 },
-  iconBtn: { backgroundColor: 'rgba(255,255,255,0.15)', width: 40, height: 40, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
-
-  contentContainer: { padding: 24, marginTop: -40 },
-  
-  // UPDATED: Compact Next Feed Card Styles
-  nextFeedCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E0F2F1', borderRadius: 16, padding: 14, marginBottom: 16, shadowColor: "#000", shadowOffset: {width: 0, height: 2}, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  nextFeedIconWrap: { width: 36, height: 36, backgroundColor: 'white', borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  nextFeedLabel: { fontSize: 11, fontWeight: '700', color: '#004D40', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
-  nextFeedTime: { fontSize: 16, fontWeight: '800', color: '#263238' },
-
-  cardRow: { flexDirection: 'row', gap: 16, marginBottom: 24 },
-  statusCard: { flex: 1, backgroundColor: 'white', borderRadius: 20, padding: 20, shadowColor: "#000", shadowOffset: {width: 0, height: 4}, shadowOpacity: 0.06, shadowRadius: 12, elevation: 2 },
-  cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
-  cardTitle: { fontSize: 14, fontWeight: '600', color: '#90A4AE' },
-  cardValue: { fontSize: 26, fontWeight: '800', color: '#263238', marginBottom: 8 },
-  cardSub: { fontSize: 13, color: '#B0BEC5' },
-  progressBarBg: { height: 6, backgroundColor: '#ECEFF1', borderRadius: 3, overflow: 'hidden' },
-  progressBarFill: { height: '100%', borderRadius: 3 },
-
-  adminPanel: { backgroundColor: 'white', borderRadius: 18, padding: 20, marginBottom: 24, borderWidth: 1, borderColor: '#ECEFF1' },
-  adminButtonsRow: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 12 },
-  adminBtn: { alignItems: 'center' },
-  adminIconWrap: { width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
-  adminBtnText: { fontSize: 12, fontWeight: '700', color: '#546E7A' },
-
-  staffPanel: { marginBottom: 24 },
-  reportBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFEBEE', paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: '#FFCDD2' },
-  reportBtnText: { color: '#D32F2F', fontWeight: '700', fontSize: 15, marginLeft: 8 },
-
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#37474F' },
-  addBtnSm: { backgroundColor: '#E0F2F1', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
-  addText: { color: '#004D40', fontWeight: '700', fontSize: 13 },
-
-  listBox: { backgroundColor: 'white', borderRadius: 18, borderWidth: 1, borderColor: '#ECEFF1', overflow: 'hidden', marginBottom: 32 },
-  listItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 18, borderBottomWidth: 1, borderBottomColor: '#F5F7FA', backgroundColor: 'white' },
-  itemTitle: { fontSize: 17, fontWeight: '700', color: '#37474F' },
-  itemTitleAlt: { fontSize: 16, fontWeight: '600', color: '#37474F' },
-  itemSub: { fontSize: 13, color: '#90A4AE', marginTop: 2 },
-  emptyText: { padding: 24, textAlign: 'center', color: '#B0BEC5' },
-
-  deleteAction: { backgroundColor: '#D32F2F', justifyContent: 'center', alignItems: 'center', width: 90, height: '100%' },
-  deleteActionText: { color: 'white', fontWeight: 'bold', fontSize: 12, marginTop: 4 },
-  
-  historyIconWrap: { width: 36, height: 36, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 16 },
-  badge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
-  badgeText: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-
-  fab: { position: 'absolute', bottom: 32, alignSelf: 'center', backgroundColor: '#004D40', flexDirection: 'row', alignItems: 'center', paddingVertical: 16, paddingHorizontal: 32, borderRadius: 28, shadowColor: "#004D40", shadowOffset: {width: 0, height: 8}, shadowOpacity: 0.3, shadowRadius: 12, elevation: 6 },
-  fabText: { color: 'white', fontSize: 18, fontWeight: '700', marginLeft: 10 },
-
-  modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 24 },
-  modalCard: { backgroundColor: 'white', borderRadius: 24, padding: 32 },
-  modalHeader: { fontSize: 22, fontWeight: '800', color: '#263238', marginBottom: 24, textAlign: 'center' },
-  modalLabel: { fontSize: 13, fontWeight: '600', color: '#546E7A', marginBottom: 8, marginLeft: 4 },
-  modalInput: { backgroundColor: '#F5F7FA', borderWidth: 1, borderColor: '#E0E6ED', borderRadius: 14, padding: 16, fontSize: 16, marginBottom: 20, color: '#263238' },
-  modalActions: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  modalBtnCancel: { flex: 1, padding: 16, backgroundColor: '#ECEFF1', borderRadius: 14, alignItems: 'center' },
-  modalBtnSave: { flex: 1, padding: 16, backgroundColor: '#004D40', borderRadius: 14, alignItems: 'center' },
-  modalBtnTextCancel: { color: '#546E7A', fontWeight: '700', fontSize: 15 },
-  modalBtnTextSave: { color: 'white', fontWeight: '700', fontSize: 15 },
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  header: { backgroundColor: '#064E3B', paddingTop: 60, paddingHorizontal: 20, paddingBottom: 40, borderBottomLeftRadius: 24, borderBottomRightRadius: 24 },
+  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
+  welcomeText: { color: '#A7F3D0', fontSize: 14, fontWeight: '600' },
+  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold' },
+  headerIcons: { flexDirection: 'row', gap: 12 },
+  iconBtn: { padding: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12 },
+  cameraContainer: { height: 200, backgroundColor: 'black', borderRadius: 16, overflow: 'hidden', position: 'relative' },
+  webViewStyle: { flex: 1, backgroundColor: 'black' },
+  liveIndicator: { position: 'absolute', top: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, flexDirection: 'row', alignItems: 'center' },
+  redDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444', marginRight: 6 },
+  liveText: { color: 'white', fontSize: 10, fontWeight: 'bold' },
+  bannerCard: { backgroundColor: '#D1FAE5', borderRadius: 16, padding: 16, flexDirection: 'row', alignItems: 'center' },
+  bannerLabel: { color: '#065F46', fontSize: 10, fontWeight: 'bold' },
+  bannerValue: { color: '#064E3B', fontSize: 16, fontWeight: 'bold' },
+  content: { padding: 20, paddingTop: 10 },
+  gridContainer: { flexDirection: 'row', gap: 16, marginBottom: 24 },
+  statusCard: { flex: 1, backgroundColor: 'white', borderRadius: 20, padding: 16, elevation: 2 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
+  cardLabel: { color: '#94A3B8', fontSize: 14, fontWeight: '600' },
+  foodPercent: { fontSize: 32, fontWeight: 'bold', color: '#EF4444', marginBottom: 8 },
+  progressBarBg: { height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, marginTop: 10 },
+  progressBarFill: { height: 6, backgroundColor: '#EF4444', borderRadius: 3 },
+  systemStatusText: { fontSize: 24, fontWeight: 'bold', color: '#0F172A' },
+  systemSubtext: { fontSize: 12, color: '#94A3B8', marginTop: 4 },
+  sectionContainer: { marginBottom: 24 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#334155', marginBottom: 12 },
+  controlsRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: 'white', padding: 20, borderRadius: 20, elevation: 2 },
+  controlBtn: { alignItems: 'center', gap: 8 },
+  controlIconCircle: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  controlLabel: { fontSize: 12, fontWeight: '600', color: '#64748B' },
+  scheduleItem: { backgroundColor: 'white', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderRadius: 16, marginBottom: 10, elevation: 1 },
+  scheduleTime: { fontSize: 18, fontWeight: 'bold', color: '#0F172A' },
+  scheduleLabel: { fontSize: 12, color: '#94A3B8' },
+  historyItem: { backgroundColor: 'white', flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 16, marginBottom: 8, elevation: 1 },
+  historyDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#059669', marginRight: 12 },
+  historyTime: { fontSize: 14, fontWeight: 'bold', color: '#0F172A' },
+  historyStatus: { fontSize: 12, color: '#64748B' },
+  floatingContainer: { position: 'absolute', bottom: 30, alignSelf: 'center', width: '100%', alignItems: 'center' },
+  feedNowBtn: { flexDirection: 'row', backgroundColor: '#064E3B', paddingVertical: 16, paddingHorizontal: 32, borderRadius: 30, alignItems: 'center', elevation: 8 },
+  feedNowText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#0F172A' },
+  inputGroup: { marginBottom: 24 },
+  label: { fontSize: 12, fontWeight: 'bold', color: '#64748B', marginBottom: 8, textTransform: 'uppercase' },
+  passwordContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', borderRadius: 12, paddingHorizontal: 16, height: 52, borderWidth: 1, borderColor: '#E2E8F0' },
+  passwordInput: { flex: 1, fontSize: 15, color: '#0F172A' },
+  eyeBtn: { padding: 8, marginRight: -8 },
+  submitBtn: { backgroundColor: '#3B82F6', borderRadius: 12, height: 52, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
+  submitBtnText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
 });

@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "172d5bda-fb4b-4151-9ce1-bede5898fdb8"
+      }
+    },
+    "android": {
+      "package": "com.ardhee.fishfeederproject"
+    }
+  }
+}
