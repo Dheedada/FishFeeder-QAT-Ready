@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-import { supabase } from '../src/services/supabase'; 
+import { supabase } from './src/services/supabase'; 
 import { Ionicons } from '@expo/vector-icons';
 
 export default function LoginScreen() {

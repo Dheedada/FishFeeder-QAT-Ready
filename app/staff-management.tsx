@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../src/services/supabase';
+import { supabase } from './src/services/supabase';
 
 export default function StaffManagement() {
   const router = useRouter();
@@ -30,7 +30,7 @@ export default function StaffManagement() {
   const [newId, setNewId] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false); // <-- NEW: State for the eye icon
+  const [showPassword, setShowPassword] = useState(false); 
 
   const [staffList, setStaffList] = useState<any[]>([]);
 
@@ -62,8 +62,25 @@ export default function StaffManagement() {
   }, [fetchStaff]);
 
   const handleCreateStaff = async () => {
+    // 1. Check if fields are empty
     if (!newName || !newId || !newEmail || !newPassword) {
       Alert.alert("Incomplete", "Please fill in all staff details.");
+      return;
+    }
+
+    // --- NEW: VALIDATION 1 (Name cannot be only numbers) ---
+    // This checks if the name consists strictly of digits from start to finish
+    const isOnlyNumbers = /^\d+$/.test(newName.trim());
+    if (isOnlyNumbers) {
+      Alert.alert("Invalid Name", "Full Name cannot consist of only numbers. Please enter a valid name.");
+      return;
+    }
+
+    // --- NEW: VALIDATION 2 (Prevent Duplicate Employee IDs) ---
+    // This looks at our current staffList to see if the ID already exists
+    const isIdTaken = staffList.some(staff => staff.employee_id === newId.trim());
+    if (isIdTaken) {
+      Alert.alert("Duplicate ID", `Employee ID "${newId}" is already assigned to another staff member. Please enter a unique ID.`);
       return;
     }
 
@@ -104,7 +121,7 @@ export default function StaffManagement() {
         setNewId('');
         setNewEmail('');
         setNewPassword('');
-        setShowPassword(false); // <-- NEW: Reset the eye icon when closed
+        setShowPassword(false);
         setModalVisible(false);
         fetchStaff();
       }
@@ -219,10 +236,11 @@ export default function StaffManagement() {
                 <Text style={styles.label}>Employee ID</Text>
                 <TextInput 
                   style={styles.input} 
-                  placeholder="e.g. EMP-001" 
+                  placeholder="e.g. 001" 
                   value={newId} 
                   onChangeText={setNewId} 
                   placeholderTextColor="#B0BEC5"
+                  keyboardType="number-pad" 
                 />
               </View>
 
@@ -239,7 +257,6 @@ export default function StaffManagement() {
                 />
               </View>
 
-              {/* NEW: Password input with eye toggle */}
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Temporary Password</Text>
                 <View style={styles.passwordContainer}>
@@ -296,8 +313,6 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#F1F5F9', borderRadius: 12, paddingHorizontal: 16, height: 52, fontSize: 15, color: '#0F172A', borderWidth: 1, borderColor: '#E2E8F0' },
   submitBtn: { backgroundColor: '#059669', borderRadius: 12, height: 52, justifyContent: 'center', alignItems: 'center', marginTop: 12, marginBottom: 20 },
   submitBtnText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
-  
-  // NEW: Styles for the password container and eye icon
   passwordContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', borderRadius: 12, paddingHorizontal: 16, height: 52, borderWidth: 1, borderColor: '#E2E8F0' },
   passwordInput: { flex: 1, fontSize: 15, color: '#0F172A' },
   eyeBtn: { padding: 8, marginRight: -8 },
