@@ -7,10 +7,11 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons'; 
 import { supabase } from './src/services/supabase';
 import { WebView } from 'react-native-webview';
-import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler'; 
+// --- ADDED: GestureHandlerRootView to listen for finger swipes ---
+import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 // --- FIXED: Your Exact Hardware IP ---
-const ESP32_IP = "10.224.188.120"; 
+const ESP32_IP = "10.51.140.120";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -53,24 +54,20 @@ export default function Dashboard() {
     }
   };
 
-  // --- UPDATED: The Smart Hardware Sync Function ---
   const syncSchedulesToHardware = async (currentSchedules: any[]) => {
-    // 1. Filter out only the schedules that are actually turned ON
     const activeSchedules = currentSchedules.filter(s => s.active);
     let query = '';
     
-    // 2. Fill ESP32 Memory Slot 1 with the first active schedule
     if (activeSchedules.length > 0) {
       query += `s1=${activeSchedules[0].time}&a1=1`;
     } else {
-      query += `s1=00:00&a1=0`; // Tell hardware to disable slot 1
+      query += `s1=00:00&a1=0`; 
     }
 
-    // 3. Fill ESP32 Memory Slot 2 with the second active schedule
     if (activeSchedules.length > 1) {
       query += `&s2=${activeSchedules[1].time}&a2=1`;
     } else {
-      query += `&s2=00:00&a2=0`; // Tell hardware to disable slot 2
+      query += `&s2=00:00&a2=0`; 
     }
 
     try {
@@ -95,8 +92,6 @@ export default function Dashboard() {
         active: item.is_active
       }));
       setSchedules(mappedData);
-      
-      // Send only the ACTIVE ones to hardware
       syncSchedulesToHardware(mappedData);
     }
   };
@@ -179,6 +174,19 @@ export default function Dashboard() {
     if (error) fetchSchedules(); 
   };
 
+  const handleDeleteSchedule = async (id: number) => {
+    Alert.alert("Delete Schedule", "Are you sure you want to remove this time?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: async () => {
+          const updatedSchedules = schedules.filter(item => item.id !== id);
+          setSchedules(updatedSchedules);
+          syncSchedulesToHardware(updatedSchedules);
+          await supabase.from('feeding_schedules').delete().eq('id', id);
+        }
+      }
+    ]);
+  };
+
   const handleDeleteHistory = async (id: number) => {
     await supabase.from('feeding_history').delete().eq('id', id);
     setHistory(prev => prev.filter(item => item.id !== id));
@@ -213,7 +221,7 @@ export default function Dashboard() {
   };
 
   const handleUpdatePassword = async () => {
-    if (newPassword.length < 6) return Alert.alert("Error", "Min 6 chars.");
+    if (newPassword.length < 6) return Alert.alert("Error", "Password must be 6 characters.");
     setChangingPassword(true);
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     setChangingPassword(false);
@@ -224,91 +232,118 @@ export default function Dashboard() {
     Alert.alert("Logout", "End session?", [{ text: "Cancel" }, { text: "Logout", onPress: async () => { await supabase.auth.signOut(); router.replace('/'); } }]);
   };
 
+  // --- SWIPE ACTION RENDERERS ---
+  const renderScheduleRightActions = (id: number) => (
+    <TouchableOpacity style={styles.scheduleDeleteAction} onPress={() => handleDeleteSchedule(id)}>
+      <Ionicons name="trash" size={24} color="white" />
+    </TouchableOpacity>
+  );
+
+  const renderHistoryRightActions = (id: number) => (
+    <TouchableOpacity style={styles.deleteAction} onPress={() => handleDeleteHistory(id)}>
+      <Ionicons name="trash" size={24} color="white" />
+    </TouchableOpacity>
+  );
+
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <View><Text style={styles.welcomeText}>Welcome, Admin</Text><Text style={styles.headerTitle}>Overview</Text></View>
-            <View style={styles.headerIcons}>
-              <TouchableOpacity style={[styles.iconBtn, showCamera && { backgroundColor: '#10B981' }]} onPress={() => setShowCamera(!showCamera)}><Ionicons name="videocam-outline" size={20} color="white" /></TouchableOpacity>
-              <TouchableOpacity style={styles.iconBtn} onPress={() => { fetchHistory(); fetchSchedules(); }}><Ionicons name="refresh-outline" size={20} color="#A7F3D0" /></TouchableOpacity>
-              <TouchableOpacity style={styles.iconBtn} onPress={handleLogout}><Ionicons name="log-out-outline" size={20} color="#A7F3D0" /></TouchableOpacity>
-            </View>
+    // --- CHANGED: Wrapped the entire screen in GestureHandlerRootView ---
+    <GestureHandlerRootView style={styles.container}>
+      <View style={styles.header}>
+        <View style={styles.headerTop}>
+          <View><Text style={styles.welcomeText}>Welcome, Admin</Text><Text style={styles.headerTitle}>Overview</Text></View>
+          <View style={styles.headerIcons}>
+            <TouchableOpacity style={[styles.iconBtn, showCamera && { backgroundColor: '#10B981' }]} onPress={() => setShowCamera(!showCamera)}><Ionicons name="videocam-outline" size={20} color="white" /></TouchableOpacity>
+            <TouchableOpacity style={styles.iconBtn} onPress={() => { fetchHistory(); fetchSchedules(); }}><Ionicons name="refresh-outline" size={20} color="#A7F3D0" /></TouchableOpacity>
+            <TouchableOpacity style={styles.iconBtn} onPress={handleLogout}><Ionicons name="log-out-outline" size={20} color="#A7F3D0" /></TouchableOpacity>
           </View>
-          {showCamera ? (
-            <View style={styles.cameraContainer}><WebView source={{ html: `<html><body style="margin:0;background:black;"><img src="http://${ESP32_IP}:81/stream" style="width:100%;height:100%;object-fit:cover;"></body></html>` }} scrollEnabled={false} /></View>
-          ) : (
-            <View style={styles.bannerCard}><Ionicons name="time-outline" size={20} color="#065F46" style={{marginRight: 12}} /><View><Text style={styles.bannerLabel}>UPCOMING AUTO-FEED</Text><Text style={styles.bannerValue}>{getNextActiveSchedule()}</Text></View></View>
-          )}
+        </View>
+        {showCamera ? (
+          <View style={styles.cameraContainer}><WebView source={{ html: `<html><body style="margin:0;background:black;"><img src="http://${ESP32_IP}:81/stream" style="width:100%;height:100%;object-fit:cover;"></body></html>` }} scrollEnabled={false} /></View>
+        ) : (
+          <View style={styles.bannerCard}><Ionicons name="time-outline" size={20} color="#065F46" style={{marginRight: 12}} /><View><Text style={styles.bannerLabel}>UPCOMING AUTO-FEED</Text><Text style={styles.bannerValue}>{getNextActiveSchedule()}</Text></View></View>
+        )}
+      </View>
+
+      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 120 }}>
+        <View style={styles.gridContainer}>
+          <View style={styles.statusCard}><View style={styles.cardHeader}><Text style={styles.cardLabel}>Food Level</Text><Ionicons name="nutrition-outline" size={18} color="#EF4444" /></View><Text style={styles.foodPercent}>{foodLevel}%</Text><View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: `${foodLevel}%` }]} /></View></View>
+          <View style={styles.statusCard}><View style={styles.cardHeader}><Text style={styles.cardLabel}>System</Text><Ionicons name="wifi" size={18} color="#3B82F6" /></View><Text style={styles.systemStatusText}>{isSystemOnline ? "Online" : "Offline"}</Text></View>
         </View>
 
-        <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 120 }}>
-          <View style={styles.gridContainer}>
-            <View style={styles.statusCard}><View style={styles.cardHeader}><Text style={styles.cardLabel}>Food Level</Text><Ionicons name="nutrition-outline" size={18} color="#EF4444" /></View><Text style={styles.foodPercent}>{foodLevel}%</Text><View style={styles.progressBarBg}><View style={[styles.progressBarFill, { width: `${foodLevel}%` }]} /></View></View>
-            <View style={styles.statusCard}><View style={styles.cardHeader}><Text style={styles.cardLabel}>System</Text><Ionicons name="wifi" size={18} color="#3B82F6" /></View><Text style={styles.systemStatusText}>{isSystemOnline ? "Online" : "Offline"}</Text></View>
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionTitle}>Admin Controls</Text>
+          <View style={styles.controlsRow}>
+            <TouchableOpacity style={styles.controlBtn} onPress={handleReboot}><View style={[styles.controlIconCircle, { backgroundColor: '#FEE2E2' }]}><Ionicons name="power" size={22} color="#EF4444" /></View><Text style={styles.controlLabel}>Reboot</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.controlBtn} onPress={handleMaintenance}><View style={[styles.controlIconCircle, isMaintenanceMode ? { backgroundColor: '#FEF3C7' } : { backgroundColor: '#F3F4F6' }]}><Ionicons name="construct-outline" size={22} color={isMaintenanceMode ? "#D97706" : "#6B7280"} /></View><Text style={[styles.controlLabel, isMaintenanceMode && { color: '#D97706' }]}>Maint.</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/staff-management')}><View style={[styles.controlIconCircle, { backgroundColor: '#DBEAFE' }]}><Ionicons name="people-outline" size={22} color="#3B82F6" /></View><Text style={styles.controlLabel}>Staff</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.controlBtn} onPress={() => setPasswordModalVisible(true)}><View style={[styles.controlIconCircle, { backgroundColor: '#F3E8FF' }]}><Ionicons name="key-outline" size={22} color="#A855F7" /></View><Text style={styles.controlLabel}>Password</Text></TouchableOpacity>
           </View>
+        </View>
 
-          <View style={styles.sectionContainer}>
-            <Text style={styles.sectionTitle}>Admin Controls</Text>
-            <View style={styles.controlsRow}>
-              <TouchableOpacity style={styles.controlBtn} onPress={handleReboot}><View style={[styles.controlIconCircle, { backgroundColor: '#FEE2E2' }]}><Ionicons name="power" size={22} color="#EF4444" /></View><Text style={styles.controlLabel}>Reboot</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.controlBtn} onPress={handleMaintenance}><View style={[styles.controlIconCircle, isMaintenanceMode ? { backgroundColor: '#FEF3C7' } : { backgroundColor: '#F3F4F6' }]}><Ionicons name="construct-outline" size={22} color={isMaintenanceMode ? "#D97706" : "#6B7280"} /></View><Text style={[styles.controlLabel, isMaintenanceMode && { color: '#D97706' }]}>Maint.</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/staff-management')}><View style={[styles.controlIconCircle, { backgroundColor: '#DBEAFE' }]}><Ionicons name="people-outline" size={22} color="#3B82F6" /></View><Text style={styles.controlLabel}>Staff</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.controlBtn} onPress={() => setPasswordModalVisible(true)}><View style={[styles.controlIconCircle, { backgroundColor: '#F3E8FF' }]}><Ionicons name="key-outline" size={22} color="#A855F7" /></View><Text style={styles.controlLabel}>Password</Text></TouchableOpacity>
-            </View>
+        <View style={styles.sectionContainer}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Automation Schedule</Text>
+            <TouchableOpacity onPress={() => setScheduleModalVisible(true)}><Ionicons name="add-circle" size={28} color="#064E3B" /></TouchableOpacity>
           </View>
-
-          <View style={styles.sectionContainer}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Automation Schedule</Text>
-              <TouchableOpacity onPress={() => setScheduleModalVisible(true)}><Ionicons name="add-circle" size={28} color="#064E3B" /></TouchableOpacity>
-            </View>
-            {schedules.map((item) => (
-              <View key={item.id} style={styles.scheduleItem}>
-                <View><Text style={styles.scheduleTime}>{item.time}</Text><Text style={styles.scheduleLabel}>{item.label}</Text></View>
-                <Switch value={item.active} onValueChange={() => toggleSchedule(item.id, item.active)} trackColor={{ false: "#E2E8F0", true: "#A7F3D0" }} thumbColor={item.active ? "#059669" : "#94A3B8"} ios_backgroundColor="#E2E8F0" />
+          {schedules.map((item) => (
+            <Swipeable key={item.id} renderRightActions={() => renderScheduleRightActions(item.id)}>
+              <View style={styles.scheduleItem}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.scheduleTime}>{item.time}</Text>
+                  <Text style={styles.scheduleLabel}>{item.label}</Text>
+                </View>
+                <Switch 
+                  value={item.active} 
+                  onValueChange={() => toggleSchedule(item.id, item.active)} 
+                  trackColor={{ false: "#E2E8F0", true: "#A7F3D0" }} 
+                  thumbColor={item.active ? "#059669" : "#94A3B8"} 
+                  ios_backgroundColor="#E2E8F0" 
+                />
               </View>
-            ))}
-            {schedules.length === 0 && <Text style={[styles.systemSubtext, {textAlign: 'center', marginTop: 10}]}>No schedules set yet.</Text>}
+            </Swipeable>
+          ))}
+          {schedules.length === 0 && <Text style={[styles.systemSubtext, {textAlign: 'center', marginTop: 10}]}>No schedules set yet.</Text>}
+        </View>
+
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionTitle}>Feeding History</Text>
+          {history.map((log) => (
+            <Swipeable key={log.id} renderRightActions={() => renderHistoryRightActions(log.id)}>
+              <View style={styles.historyItem}>
+                <View style={styles.historyDot} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.historyTime}>{log.time}</Text>
+                  <Text style={styles.historyStatus}>{log.status}</Text>
+                </View>
+                <Ionicons name="checkmark-circle" size={20} color="#059669" style={{ marginRight: 12 }} />
+              </View>
+            </Swipeable>
+          ))}
+        </View>
+      </ScrollView>
+
+      <Modal visible={scheduleModalVisible} animationType="slide" transparent={true}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}><Text style={styles.modalTitle}>Add Schedule</Text><TouchableOpacity onPress={() => { setScheduleModalVisible(false); setTimeError(''); setNewTime(''); setNewLabel(''); }}><Ionicons name="close" size={28} color="#64748B" /></TouchableOpacity></View>
+            <View style={styles.inputGroup}><Text style={styles.label}>Time (HH:MM - 24hr)</Text><View style={[styles.textInputContainer, timeError ? { borderColor: '#EF4444', borderWidth: 1.5 } : null]}><TextInput style={styles.textInputBase} placeholder="e.g., 08:00" value={newTime} onChangeText={handleTimeChange} keyboardType="number-pad" maxLength={5} /></View>{timeError ? <Text style={styles.errorText}>{timeError}</Text> : null}</View>
+            <View style={styles.inputGroup}><Text style={styles.label}>Label</Text><View style={styles.textInputContainer}><TextInput style={styles.textInputBase} placeholder="e.g., Snack" value={newLabel} onChangeText={setNewLabel} /></View></View>
+            <TouchableOpacity style={styles.submitBtn} onPress={handleAddSchedule}><Text style={styles.submitBtnText}>Save Schedule</Text></TouchableOpacity>
           </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
-          <View style={styles.sectionContainer}>
-            <Text style={styles.sectionTitle}>Feeding History</Text>
-            {history.map((log) => (
-              <Swipeable key={log.id} renderRightActions={() => (
-                <TouchableOpacity style={styles.deleteAction} onPress={() => handleDeleteHistory(log.id)}><Ionicons name="trash" size={24} color="white" /></TouchableOpacity>
-              )}>
-                <View style={styles.historyItem}><View style={styles.historyDot} /><View><Text style={styles.historyTime}>{log.time}</Text><Text style={styles.historyStatus}>{log.status}</Text></View><Ionicons name="checkmark-circle" size={20} color="#059669" style={{marginLeft: 'auto'}} /></View>
-              </Swipeable>
-            ))}
+      <Modal visible={passwordModalVisible} animationType="slide" transparent={true}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}><Text style={styles.modalTitle}>Change Password</Text><TouchableOpacity onPress={() => setPasswordModalVisible(false)}><Ionicons name="close" size={28} color="#64748B" /></TouchableOpacity></View>
+            <View style={styles.inputGroup}><Text style={styles.label}>New Password</Text><View style={styles.passwordContainer}><TextInput style={styles.passwordInput} placeholder="Min 6 chars" secureTextEntry={!showPassword} value={newPassword} onChangeText={setNewPassword} /><TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}><Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#90A4AE" /></TouchableOpacity></View></View>
+            <TouchableOpacity style={styles.submitBtn} onPress={handleUpdatePassword} disabled={changingPassword}>{changingPassword ? <ActivityIndicator color="white" /> : <Text style={styles.submitBtnText}>Save</Text>}</TouchableOpacity>
           </View>
-        </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
 
-        {/* --- MODALS REMAIN THE SAME --- */}
-        <Modal visible={scheduleModalVisible} animationType="slide" transparent={true}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-            <View style={styles.modalCard}>
-              <View style={styles.modalHeader}><Text style={styles.modalTitle}>Add Schedule</Text><TouchableOpacity onPress={() => { setScheduleModalVisible(false); setTimeError(''); setNewTime(''); setNewLabel(''); }}><Ionicons name="close" size={28} color="#64748B" /></TouchableOpacity></View>
-              <View style={styles.inputGroup}><Text style={styles.label}>Time (HH:MM - 24hr)</Text><View style={[styles.textInputContainer, timeError ? { borderColor: '#EF4444', borderWidth: 1.5 } : null]}><TextInput style={styles.textInputBase} placeholder="e.g., 08:00" value={newTime} onChangeText={handleTimeChange} keyboardType="number-pad" maxLength={5} /></View>{timeError ? <Text style={styles.errorText}>{timeError}</Text> : null}</View>
-              <View style={styles.inputGroup}><Text style={styles.label}>Label</Text><View style={styles.textInputContainer}><TextInput style={styles.textInputBase} placeholder="e.g., Snack" value={newLabel} onChangeText={setNewLabel} /></View></View>
-              <TouchableOpacity style={styles.submitBtn} onPress={handleAddSchedule}><Text style={styles.submitBtnText}>Save Schedule</Text></TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
-
-        <Modal visible={passwordModalVisible} animationType="slide" transparent={true}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-            <View style={styles.modalCard}>
-              <View style={styles.modalHeader}><Text style={styles.modalTitle}>Change Password</Text><TouchableOpacity onPress={() => setPasswordModalVisible(false)}><Ionicons name="close" size={28} color="#64748B" /></TouchableOpacity></View>
-              <View style={styles.inputGroup}><Text style={styles.label}>New Password</Text><View style={styles.passwordContainer}><TextInput style={styles.passwordInput} placeholder="Min 6 chars" secureTextEntry={!showPassword} value={newPassword} onChangeText={setNewPassword} /><TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}><Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#90A4AE" /></TouchableOpacity></View></View>
-              <TouchableOpacity style={styles.submitBtn} onPress={handleUpdatePassword} disabled={changingPassword}>{changingPassword ? <ActivityIndicator color="white" /> : <Text style={styles.submitBtnText}>Save</Text>}</TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
-
-        <View style={styles.floatingContainer}><TouchableOpacity style={[styles.feedNowBtn, isMaintenanceMode && { backgroundColor: '#94A3B8' }]} onPress={handleFeedNow}><Ionicons name={isMaintenanceMode ? "lock-closed" : "fish-outline"} size={24} color="white" style={{ marginRight: 8 }} /><Text style={styles.feedNowText}>{isMaintenanceMode ? "Locked" : "Feed Now"}</Text></TouchableOpacity></View>
-      </View>
+      <View style={styles.floatingContainer}><TouchableOpacity style={[styles.feedNowBtn, isMaintenanceMode && { backgroundColor: '#94A3B8' }]} onPress={handleFeedNow}><Ionicons name={isMaintenanceMode ? "lock-closed" : "fish-outline"} size={24} color="white" style={{ marginRight: 8 }} /><Text style={styles.feedNowText}>{isMaintenanceMode ? "Locked" : "Feed Now"}</Text></TouchableOpacity></View>
     </GestureHandlerRootView>
   );
 }
@@ -342,8 +377,6 @@ const styles = StyleSheet.create({
   controlIconCircle: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   controlLabel: { fontSize: 12, fontWeight: '600', color: '#64748B' },
   scheduleItem: { backgroundColor: 'white', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderRadius: 16, marginBottom: 10, elevation: 1 },
-  scheduleTime: { fontSize: 18, fontWeight: 'bold', color: '#0F172A' },
-  scheduleLabel: { fontSize: 12, color: '#94A3B8' },
   historyItem: { backgroundColor: 'white', flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 16, marginBottom: 8, elevation: 1 },
   historyDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#059669', marginRight: 12 },
   historyTime: { fontSize: 14, fontWeight: 'bold', color: '#0F172A' },
@@ -363,6 +396,7 @@ const styles = StyleSheet.create({
   submitBtn: { backgroundColor: '#3B82F6', borderRadius: 12, height: 52, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   submitBtnText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
   deleteAction: { backgroundColor: '#EF4444', justifyContent: 'center', alignItems: 'center', width: 80, height: '90%', borderTopRightRadius: 16, borderBottomRightRadius: 16, marginBottom: 8 },
+  scheduleDeleteAction: { backgroundColor: '#EF4444', justifyContent: 'center', alignItems: 'center', width: 80, height: '90%', borderTopRightRadius: 16, borderBottomRightRadius: 16, marginBottom: 10 },
   textInputContainer: { backgroundColor: '#F1F5F9', borderRadius: 12, paddingHorizontal: 16, height: 52, borderWidth: 1, borderColor: '#E2E8F0', justifyContent: 'center' },
   textInputBase: { fontSize: 15, color: '#0F172A' },
   errorText: { color: '#EF4444', fontSize: 12, marginTop: 4, marginLeft: 4, fontWeight: '600' }

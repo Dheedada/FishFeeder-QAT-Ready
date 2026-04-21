@@ -1,19 +1,30 @@
 {
   "expo": {
     "name": "fishfeederproject",
-    "slug": "fishfeederproject",
+    "slug": "fishfeeder-qat",
+    "owner": "motmot",
     "version": "1.0.0",
-    "sdkVersion": "54.0.0",
-    "extra": {
-      "eas": {
-        "projectId": "172d5bda-fb4b-4151-9ce1-bede5898fdb8"
-      }
-    },
     "android": {
       "package": "com.ardhee.fishfeederproject"
     },
     "plugins": [
-      "expo-web-browser"
-    ]
+      "expo-web-browser",
+      [
+        "expo-build-properties",
+        {
+        "android": {
+          "compileSdkVersion": 36
+        }
+      }
+      ],
+      "expo-router",
+      "expo-font"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c32b2b25-36d8-46e2-a09b-46eed74aae3d"
+      }
+    }
   }
 }
