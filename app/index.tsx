@@ -44,7 +44,8 @@ export default function LoginScreen() {
       } 
       else if (loginType === 'staff') {
         if (userRole === 'admin') {
-          Alert.alert("Wrong Portal", "You are an Admin. Please use the Admin tab to sign in.");
+          // --- CHANGED: Removed the "Wrong Portal" title, leaving just the message ---
+          Alert.alert("", "You are an Admin. Please use the Admin tab to sign in.");
           await supabase.auth.signOut();
         } else {
           router.replace('/staff-dashboard');

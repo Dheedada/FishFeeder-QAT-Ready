@@ -7,7 +7,7 @@ import { supabase } from './src/services/supabase';
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler'; 
 
 // --- HARDWARE SETTINGS ---
-const ESP32_IP = "10.51.140.120";
+const ESP32_IP = "172.31.9.120";
 
 export default function StaffDashboard() {
   const router = useRouter();
@@ -32,9 +32,10 @@ export default function StaffDashboard() {
 
   const fetchLiveStatus = async () => {
     try {
-      const response = await fetch(`http://${ESP32_IP}/level`);
-      const val = await response.text();
-      setFoodLevel(parseInt(val) || 0);
+      // UPDATED: Use Port 88 and JSON status for consistency
+      const response = await fetch(`http://${ESP32_IP}:88/status`);
+      const data = await response.json();
+      setFoodLevel(data.level);
       setSystemOnline(true);
     } catch (e) {
       setSystemOnline(false);
@@ -83,7 +84,8 @@ export default function StaffDashboard() {
 
   const handleFeedNow = async () => {
     try {
-      await fetch(`http://${ESP32_IP}/feed`);
+      // UPDATED: Standardizing to Port 88 /feed
+      await fetch(`http://${ESP32_IP}:88/feed`); 
       await supabase.from('feeding_history').insert([{ status: 'Manual Feed (Staff)' }]);
       Alert.alert("Success!", "Feeding Started!");
       fetchHistory(); 
@@ -92,7 +94,6 @@ export default function StaffDashboard() {
     }
   };
 
-  // --- FIXED: Refill is now strictly a database notification tool ---
   const handleRefill = async () => {
     Alert.alert(
       "Log Refill", 
@@ -100,13 +101,17 @@ export default function StaffDashboard() {
       [
         { text: "Cancel", style: "cancel" },
         { text: "Confirm", onPress: async () => {
-           try {
-             await supabase.from('feeding_history').insert([{ status: 'Food Hopper Refilled' }]);
-             Alert.alert("Success", "Admin notified! The log has been updated.");
-             fetchHistory();
-           } catch (e) {
-             Alert.alert("Error", "Could not connect to database.");
-           }
+            try {
+              // --- NEW: Command hardware to reset memory to 100 ---
+              await fetch(`http://${ESP32_IP}:88/refill`);
+              
+              await supabase.from('feeding_history').insert([{ status: 'Food Hopper Refilled' }]);
+              Alert.alert("Success", "Hopper Reset to 100%!");
+              fetchHistory();
+              fetchLiveStatus(); // Instantly update UI
+            } catch (e) {
+              Alert.alert("Error", "Could not reach hardware.");
+            }
         }}
       ]
     );
@@ -127,10 +132,16 @@ export default function StaffDashboard() {
     }
   };
 
+  const handleLogout = async () => {
+    Alert.alert("Logout", "End session?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "OK", onPress: async () => { await supabase.auth.signOut(); router.replace('/'); } }
+    ]);
+  };
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={styles.container}>
-        {/* --- HEADER --- */}
         <View style={styles.header}>
           <View style={styles.headerTop}>
             <View>
@@ -138,13 +149,13 @@ export default function StaffDashboard() {
               <Text style={styles.headerTitle}>Overview</Text>
             </View>
             <View style={styles.headerIcons}>
-              <TouchableOpacity 
-                style={[styles.iconBtn, showCamera && {backgroundColor: '#10B981'}]} 
-                onPress={() => setShowCamera(!showCamera)}
-              >
+              <TouchableOpacity style={[styles.iconBtn, showCamera && {backgroundColor: '#10B981'}]} onPress={() => setShowCamera(!showCamera)}>
                 <Ionicons name="videocam-outline" size={20} color="white" />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.iconBtn} onPress={async () => { await supabase.auth.signOut(); router.replace('/'); }}>
+              <TouchableOpacity style={styles.iconBtn} onPress={() => { fetchHistory(); fetchSchedules(); }}>
+                <Ionicons name="refresh-outline" size={20} color="#A7F3D0" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.iconBtn} onPress={handleLogout}>
                 <Ionicons name="log-out-outline" size={20} color="#A7F3D0" />
               </TouchableOpacity>
             </View>
@@ -166,7 +177,6 @@ export default function StaffDashboard() {
         </View>
 
         <ScrollView style={styles.content}>
-          {/* --- STATUS CARDS --- */}
           <View style={styles.gridContainer}>
             <View style={styles.statusCard}>
               <View style={styles.cardHeader}>
@@ -184,20 +194,14 @@ export default function StaffDashboard() {
                 <Text style={styles.cardLabel}>System</Text>
                 <Ionicons name="wifi" size={18} color="#3B82F6" />
               </View>
-              <Text style={styles.systemStatusText}>{isSystemOnline ? "Online" : "Offline"}</Text>
+              <Text style={[styles.systemStatusText, { color: isSystemOnline ? '#2F9E44' : '#E03131' }]}>{isSystemOnline ? "Online" : "Offline"}</Text>
               <Text style={styles.systemSubtext}>Stable Connection</Text>
             </View>
           </View>
 
-          {/* --- STAFF ACTIONS --- */}
           <View style={styles.sectionContainer}>
             <Text style={styles.sectionTitle}>Staff Actions</Text>
             <View style={styles.controlsRow}>
-              <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/ui/report')}>
-                <View style={[styles.controlIconCircle, { backgroundColor: '#FEE2E2' }]}><Ionicons name="document-text-outline" size={22} color="#EF4444" /></View>
-                <Text style={styles.controlLabel}>Report</Text>
-              </TouchableOpacity>
-              
               <TouchableOpacity style={styles.controlBtn} onPress={handleRefill}>
                 <View style={[styles.controlIconCircle, { backgroundColor: '#D1FAE5' }]}><Ionicons name="cube-outline" size={22} color="#059669" /></View>
                 <Text style={styles.controlLabel}>Refill</Text>
@@ -210,7 +214,6 @@ export default function StaffDashboard() {
             </View>
           </View>
 
-          {/* --- FEEDING HISTORY --- */}
           <View style={styles.sectionContainer}>
             <Text style={styles.sectionTitle}>Recent Feeding Logs</Text>
             {history.map((log) => (
@@ -232,7 +235,6 @@ export default function StaffDashboard() {
           </View>
         </ScrollView>
 
-        {/* --- PASSWORD MODAL --- */}
         <Modal visible={passwordModalVisible} animationType="slide" transparent={true}>
           <KeyboardAvoidingView behavior="padding" style={styles.modalOverlay}>
             <View style={styles.modalCard}>
@@ -256,7 +258,6 @@ export default function StaffDashboard() {
           </KeyboardAvoidingView>
         </Modal>
 
-        {/* --- FLOATING FEED BUTTON --- */}
         <View style={styles.floatingContainer}>
           <TouchableOpacity style={styles.feedNowBtn} onPress={handleFeedNow}>
             <Ionicons name="fish-outline" size={24} color="white" style={{ marginRight: 8 }} />
@@ -288,7 +289,7 @@ const styles = StyleSheet.create({
   foodPercent: { fontSize: 32, fontWeight: 'bold', color: '#EF4444' },
   progressBarBg: { height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, marginTop: 10 },
   progressBarFill: { height: 6, backgroundColor: '#EF4444', borderRadius: 3 },
-  systemStatusText: { fontSize: 24, fontWeight: 'bold', color: '#0F172A' },
+  systemStatusText: { fontSize: 24, fontWeight: 'bold' },
   systemSubtext: { fontSize: 12, color: '#94A3B8', marginTop: 4 },
   sectionContainer: { marginBottom: 24 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#334155', marginBottom: 12 },

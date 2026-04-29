@@ -7,11 +7,10 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons'; 
 import { supabase } from './src/services/supabase';
 import { WebView } from 'react-native-webview';
-// --- ADDED: GestureHandlerRootView to listen for finger swipes ---
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 // --- FIXED: Your Exact Hardware IP ---
-const ESP32_IP = "10.51.140.120";
+const ESP32_IP = "172.31.9.120";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -45,9 +44,13 @@ export default function Dashboard() {
 
   const fetchLiveStatus = async () => {
     try {
-      const response = await fetch(`http://${ESP32_IP}/level`);
-      const val = await response.text();
-      setFoodLevel(parseInt(val) || 0);
+      // --- ADDED :88 PORT ---
+      const response = await fetch(`http://${ESP32_IP}:88/status`);
+      const data = await response.json(); 
+      
+      setFoodLevel(data.level);
+      setIsMaintenanceMode(data.maint === 1); 
+      
       setSystemOnline(true);
     } catch (e) {
       setSystemOnline(false);
@@ -71,7 +74,8 @@ export default function Dashboard() {
     }
 
     try {
-      await fetch(`http://${ESP32_IP}/update_schedule?${query}`);
+      // --- ADDED :88 PORT ---
+      await fetch(`http://${ESP32_IP}:88/update_schedule?${query}`);
       console.log("Hardware Sync Success: " + query);
     } catch (e) {
       console.log("Hardware sync failed - check Wi-Fi");
@@ -129,7 +133,8 @@ export default function Dashboard() {
        return;
     }
     try {
-      await fetch(`http://${ESP32_IP}/feed`); 
+      // --- ADDED :88 PORT ---
+      await fetch(`http://${ESP32_IP}:88/feed`); 
       await supabase.from('feeding_history').insert([{ status: 'Manual Feed (App)' }]);
       Alert.alert("Success", "Feeding Started!");
       fetchHistory(); 
@@ -143,7 +148,8 @@ export default function Dashboard() {
       { text: "Cancel", style: "cancel" },
       { text: "Reboot", style: "destructive", onPress: async () => {
           try {
-            await fetch(`http://${ESP32_IP}/reboot`); 
+            // --- ADDED :88 PORT ---
+            await fetch(`http://${ESP32_IP}:88/reboot`); 
             Alert.alert("Rebooting", "Hardware is restarting.");
             setSystemOnline(false); 
           } catch (e) {}
@@ -152,14 +158,28 @@ export default function Dashboard() {
     ]);
   };
 
-  const handleMaintenance = () => {
+  const handleMaintenance = async () => {
     if (isMaintenanceMode) {
-       setIsMaintenanceMode(false);
-       Alert.alert("Maintenance Mode OFF", "System is back to normal operation.");
+       try {
+         // --- ADDED :88 PORT ---
+         await fetch(`http://${ESP32_IP}:88/maintenance?state=0`);
+         setIsMaintenanceMode(false);
+         Alert.alert("Maintenance Mode OFF", "System is back to normal operation.");
+       } catch (error) {
+         Alert.alert("Error", "Could not reach hardware to unlock.");
+       }
     } else {
        Alert.alert("Enable Maintenance Mode?", "Safety lock activated. Feeding is disabled.", [
            { text: "Cancel", style: "cancel" },
-           { text: "Enable", onPress: () => setIsMaintenanceMode(true) }
+           { text: "Enable", onPress: async () => {
+               try {
+                 // --- ADDED :88 PORT ---
+                 await fetch(`http://${ESP32_IP}:88/maintenance?state=1`);
+                 setIsMaintenanceMode(true);
+               } catch (error) {
+                 Alert.alert("Error", "Could not reach hardware to lock.");
+               }
+           }}
          ]);
     }
   };
@@ -229,10 +249,12 @@ export default function Dashboard() {
   };
 
   const handleLogout = async () => {
-    Alert.alert("Logout", "End session?", [{ text: "Cancel" }, { text: "Logout", onPress: async () => { await supabase.auth.signOut(); router.replace('/'); } }]);
+    Alert.alert("Logout", "End session?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "OK", onPress: async () => { await supabase.auth.signOut(); router.replace('/'); } }
+    ]);
   };
 
-  // --- SWIPE ACTION RENDERERS ---
   const renderScheduleRightActions = (id: number) => (
     <TouchableOpacity style={styles.scheduleDeleteAction} onPress={() => handleDeleteSchedule(id)}>
       <Ionicons name="trash" size={24} color="white" />
@@ -246,7 +268,6 @@ export default function Dashboard() {
   );
 
   return (
-    // --- CHANGED: Wrapped the entire screen in GestureHandlerRootView ---
     <GestureHandlerRootView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerTop}>
@@ -273,6 +294,7 @@ export default function Dashboard() {
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>Admin Controls</Text>
           <View style={styles.controlsRow}>
+            <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/ui/report')}><View style={[styles.controlIconCircle, { backgroundColor: '#FEE2E2' }]}><Ionicons name="document-text-outline" size={22} color="#EF4444" /></View><Text style={styles.controlLabel}>Report</Text></TouchableOpacity>
             <TouchableOpacity style={styles.controlBtn} onPress={handleReboot}><View style={[styles.controlIconCircle, { backgroundColor: '#FEE2E2' }]}><Ionicons name="power" size={22} color="#EF4444" /></View><Text style={styles.controlLabel}>Reboot</Text></TouchableOpacity>
             <TouchableOpacity style={styles.controlBtn} onPress={handleMaintenance}><View style={[styles.controlIconCircle, isMaintenanceMode ? { backgroundColor: '#FEF3C7' } : { backgroundColor: '#F3F4F6' }]}><Ionicons name="construct-outline" size={22} color={isMaintenanceMode ? "#D97706" : "#6B7280"} /></View><Text style={[styles.controlLabel, isMaintenanceMode && { color: '#D97706' }]}>Maint.</Text></TouchableOpacity>
             <TouchableOpacity style={styles.controlBtn} onPress={() => router.push('/staff-management')}><View style={[styles.controlIconCircle, { backgroundColor: '#DBEAFE' }]}><Ionicons name="people-outline" size={22} color="#3B82F6" /></View><Text style={styles.controlLabel}>Staff</Text></TouchableOpacity>
@@ -322,6 +344,7 @@ export default function Dashboard() {
         </View>
       </ScrollView>
 
+      {/* Modal section remains unchanged */}
       <Modal visible={scheduleModalVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -336,9 +359,9 @@ export default function Dashboard() {
       <Modal visible={passwordModalVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <View style={styles.modalHeader}><Text style={styles.modalTitle}>Change Password</Text><TouchableOpacity onPress={() => setPasswordModalVisible(false)}><Ionicons name="close" size={28} color="#64748B" /></TouchableOpacity></View>
-            <View style={styles.inputGroup}><Text style={styles.label}>New Password</Text><View style={styles.passwordContainer}><TextInput style={styles.passwordInput} placeholder="Min 6 chars" secureTextEntry={!showPassword} value={newPassword} onChangeText={setNewPassword} /><TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}><Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#90A4AE" /></TouchableOpacity></View></View>
-            <TouchableOpacity style={styles.submitBtn} onPress={handleUpdatePassword} disabled={changingPassword}>{changingPassword ? <ActivityIndicator color="white" /> : <Text style={styles.submitBtnText}>Save</Text>}</TouchableOpacity>
+            <View style={styles.modalHeader}><Text style={styles.modalTitle}>Change My Password</Text><TouchableOpacity onPress={() => setPasswordModalVisible(false)}><Ionicons name="close" size={28} color="#64748B" /></TouchableOpacity></View>
+            <View style={styles.inputGroup}><Text style={styles.label}>New Password</Text><View style={styles.passwordContainer}><TextInput style={styles.passwordInput} placeholder="Min 6 characters" secureTextEntry={!showPassword} value={newPassword} onChangeText={setNewPassword} /><TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}><Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#90A4AE" /></TouchableOpacity></View></View>
+            <TouchableOpacity style={styles.submitBtn} onPress={handleUpdatePassword} disabled={changingPassword}>{changingPassword ? <ActivityIndicator color="white" /> : <Text style={styles.submitBtnText}>Update Password</Text>}</TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -393,7 +416,7 @@ const styles = StyleSheet.create({
   passwordContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', borderRadius: 12, paddingHorizontal: 16, height: 52, borderWidth: 1, borderColor: '#E2E8F0' },
   passwordInput: { flex: 1, fontSize: 15, color: '#0F172A' },
   eyeBtn: { padding: 8, marginRight: -8 },
-  submitBtn: { backgroundColor: '#3B82F6', borderRadius: 12, height: 52, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
+  submitBtn: { backgroundColor: '#4CA771', borderRadius: 12, height: 52, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   submitBtnText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
   deleteAction: { backgroundColor: '#EF4444', justifyContent: 'center', alignItems: 'center', width: 80, height: '90%', borderTopRightRadius: 16, borderBottomRightRadius: 16, marginBottom: 8 },
   scheduleDeleteAction: { backgroundColor: '#EF4444', justifyContent: 'center', alignItems: 'center', width: 80, height: '90%', borderTopRightRadius: 16, borderBottomRightRadius: 16, marginBottom: 10 },
