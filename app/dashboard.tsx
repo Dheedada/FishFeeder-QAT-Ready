@@ -10,7 +10,7 @@ import { WebView } from 'react-native-webview';
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 // --- FIXED: Your Exact Hardware IP ---
-const ESP32_IP = "172.31.9.120";
+const ESP32_IP = "10.218.187.120";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -44,7 +44,6 @@ export default function Dashboard() {
 
   const fetchLiveStatus = async () => {
     try {
-      // --- ADDED :88 PORT ---
       const response = await fetch(`http://${ESP32_IP}:88/status`);
       const data = await response.json(); 
       
@@ -74,7 +73,6 @@ export default function Dashboard() {
     }
 
     try {
-      // --- ADDED :88 PORT ---
       await fetch(`http://${ESP32_IP}:88/update_schedule?${query}`);
       console.log("Hardware Sync Success: " + query);
     } catch (e) {
@@ -133,7 +131,6 @@ export default function Dashboard() {
        return;
     }
     try {
-      // --- ADDED :88 PORT ---
       await fetch(`http://${ESP32_IP}:88/feed`); 
       await supabase.from('feeding_history').insert([{ status: 'Manual Feed (App)' }]);
       Alert.alert("Success", "Feeding Started!");
@@ -143,12 +140,12 @@ export default function Dashboard() {
     }
   };
 
+  // --- CHANGE 1: Reboot Action Label changed to "OK" ---
   const handleReboot = () => {
     Alert.alert("Reboot System", "Restart ESP32 hardware?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Reboot", style: "destructive", onPress: async () => {
+      { text: "OK", style: "destructive", onPress: async () => { 
           try {
-            // --- ADDED :88 PORT ---
             await fetch(`http://${ESP32_IP}:88/reboot`); 
             Alert.alert("Rebooting", "Hardware is restarting.");
             setSystemOnline(false); 
@@ -158,29 +155,39 @@ export default function Dashboard() {
     ]);
   };
 
+  // --- CHANGE 2: Added Confirmation Dialog when Disabling Maintenance ---
   const handleMaintenance = async () => {
     if (isMaintenanceMode) {
-       try {
-         // --- ADDED :88 PORT ---
-         await fetch(`http://${ESP32_IP}:88/maintenance?state=0`);
-         setIsMaintenanceMode(false);
-         Alert.alert("Maintenance Mode OFF", "System is back to normal operation.");
-       } catch (error) {
-         Alert.alert("Error", "Could not reach hardware to unlock.");
-       }
+        // Confirmation before disabling
+        Alert.alert(
+            "Disable Maintenance Mode?", 
+            "Are you sure you want to resume normal operation? This will re-enable all manual and scheduled feeding.", 
+            [
+                { text: "Cancel", style: "cancel" },
+                { text: "Confirm", onPress: async () => {
+                    try {
+                        await fetch(`http://${ESP32_IP}:88/maintenance?state=0`);
+                        setIsMaintenanceMode(false);
+                        Alert.alert("Maintenance Mode OFF", "System is back to normal operation.");
+                    } catch (error) {
+                        Alert.alert("Error", "Could not reach hardware to unlock.");
+                    }
+                }}
+            ]
+        );
     } else {
-       Alert.alert("Enable Maintenance Mode?", "Safety lock activated. Feeding is disabled.", [
-           { text: "Cancel", style: "cancel" },
-           { text: "Enable", onPress: async () => {
-               try {
-                 // --- ADDED :88 PORT ---
-                 await fetch(`http://${ESP32_IP}:88/maintenance?state=1`);
-                 setIsMaintenanceMode(true);
-               } catch (error) {
-                 Alert.alert("Error", "Could not reach hardware to lock.");
-               }
-           }}
-         ]);
+        // Prompt before enabling
+        Alert.alert("Enable Maintenance Mode?", "Safety lock activated. Feeding is disabled.", [
+            { text: "Cancel", style: "cancel" },
+            { text: "Enable", onPress: async () => {
+                try {
+                    await fetch(`http://${ESP32_IP}:88/maintenance?state=1`);
+                    setIsMaintenanceMode(true);
+                } catch (error) {
+                    Alert.alert("Error", "Could not reach hardware to lock.");
+                }
+            }}
+          ]);
     }
   };
 
@@ -344,7 +351,6 @@ export default function Dashboard() {
         </View>
       </ScrollView>
 
-      {/* Modal section remains unchanged */}
       <Modal visible={scheduleModalVisible} animationType="slide" transparent={true}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
           <View style={styles.modalCard}>

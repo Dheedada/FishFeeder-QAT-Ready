@@ -7,7 +7,7 @@ import { supabase } from './src/services/supabase';
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler'; 
 
 // --- HARDWARE SETTINGS ---
-const ESP32_IP = "172.31.9.120";
+const ESP32_IP = "10.218.187.120";
 
 export default function StaffDashboard() {
   const router = useRouter();
@@ -32,7 +32,6 @@ export default function StaffDashboard() {
 
   const fetchLiveStatus = async () => {
     try {
-      // UPDATED: Use Port 88 and JSON status for consistency
       const response = await fetch(`http://${ESP32_IP}:88/status`);
       const data = await response.json();
       setFoodLevel(data.level);
@@ -84,7 +83,6 @@ export default function StaffDashboard() {
 
   const handleFeedNow = async () => {
     try {
-      // UPDATED: Standardizing to Port 88 /feed
       await fetch(`http://${ESP32_IP}:88/feed`); 
       await supabase.from('feeding_history').insert([{ status: 'Manual Feed (Staff)' }]);
       Alert.alert("Success!", "Feeding Started!");
@@ -97,18 +95,16 @@ export default function StaffDashboard() {
   const handleRefill = async () => {
     Alert.alert(
       "Log Refill", 
-      "Confirm that you have manually filled the 4-inch jar with food?", 
+      "Confirm that you have manually filled the 4-inch jar with feeds?", // CHANGED: "food" to "feeds"
       [
         { text: "Cancel", style: "cancel" },
         { text: "Confirm", onPress: async () => {
             try {
-              // --- NEW: Command hardware to reset memory to 100 ---
               await fetch(`http://${ESP32_IP}:88/refill`);
-              
               await supabase.from('feeding_history').insert([{ status: 'Food Hopper Refilled' }]);
               Alert.alert("Success", "Hopper Reset to 100%!");
               fetchHistory();
-              fetchLiveStatus(); // Instantly update UI
+              fetchLiveStatus(); 
             } catch (e) {
               Alert.alert("Error", "Could not reach hardware.");
             }
