@@ -7,16 +7,16 @@ import { supabase } from './src/services/supabase';
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler'; 
 
 // --- HARDWARE SETTINGS ---
-const ESP32_IP = "10.218.187.120";
+const ESP32_IP = "10.53.40.120";
 
 export default function StaffDashboard() {
   const router = useRouter();
-  
+                                           
   const [foodLevel, setFoodLevel] = useState(0);
   const [isSystemOnline, setSystemOnline] = useState(true);
   const [showCamera, setShowCamera] = useState(false); 
   const [history, setHistory] = useState<any[]>([]);
-  const [schedules, setSchedules] = useState<any[]>([]);
+  const [schedules, setSchedules] = useState<any[]>([]);                                             
 
   const [passwordModalVisible, setPasswordModalVisible] = useState(false);
   const [newPassword, setNewPassword] = useState('');
