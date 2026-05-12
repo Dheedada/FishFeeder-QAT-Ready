@@ -10,7 +10,7 @@ import { WebView } from 'react-native-webview';
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 // --- FIXED: Your Exact Hardware IP ---
-const ESP32_IP = "10.53.40.120";
+const ESP32_IP = "10.197.18.120";
 
 export default function Dashboard() {
   const router = useRouter();

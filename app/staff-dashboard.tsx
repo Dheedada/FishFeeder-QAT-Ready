@@ -7,7 +7,7 @@ import { supabase } from './src/services/supabase';
 import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler'; 
 
 // --- HARDWARE SETTINGS ---
-const ESP32_IP = "10.53.40.120";
+const ESP32_IP = "192.168.1.97";
 
 export default function StaffDashboard() {
   const router = useRouter();

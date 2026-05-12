@@ -12,10 +12,11 @@
       [
         "expo-build-properties",
         {
-        "android": {
-          "compileSdkVersion": 36
+          "android": {
+            "compileSdkVersion": 36,
+            "usesCleartextTraffic": true
+          }
         }
-      }
       ],
       "expo-router",
       "expo-font"
